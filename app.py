@@ -1,21 +1,18 @@
-from flask import Flask, request, render_template
+import gradio as gr
 import torch
 import timm
 from torchvision import transforms
 from PIL import Image
-import os
-
-app = Flask(__name__)
 
 # =========================================================
-# 🔹 Device
+# Device
 # =========================================================
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # =========================================================
-# 🔹 Model & Load Weights
+# Model & Load Weights
 # =========================================================
-num_classes = 15  # Change if different
+num_classes = 15
 model = timm.create_model("resnet50", pretrained=True, num_classes=num_classes)
 model.load_state_dict(torch.load("model.pth", map_location=device))
 model.to(device)
@@ -23,16 +20,17 @@ model.eval()
 print("Model loaded successfully")
 
 # =========================================================
-# 🔹 Transform for Input Images
+# Transform for Input Images
 # =========================================================
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406],[0.229, 0.224, 0.225]),
+    transforms.Normalize([0.485, 0.456, 0.406],
+                         [0.229, 0.224, 0.225]),
 ])
 
 # =========================================================
-# 🔹 Class Names
+# Class Names
 # =========================================================
 class_names = [
     "Pepper__bell___Bacterial_spot",
@@ -53,44 +51,33 @@ class_names = [
 ]
 
 # =========================================================
-# 🔹 Flask Routes
+# Prediction Function
 # =========================================================
-@app.route('/')
-def home():
-    return render_template('index.html')
-
-
-@app.route('/predict', methods=['POST'])
-def predict():
-    try:
-        if 'file' not in request.files:
-            return render_template('index.html', prediction_text="No file uploaded!")
-
-        file = request.files['file']
-
-        # Read image and preprocess
-        img = Image.open(file.stream).convert('RGB')
-        img = transform(img).unsqueeze(0).to(device)  # Add batch dimension
-
-        # Predict
-        with torch.no_grad():
-            outputs = model(img)
-            probs = torch.softmax(outputs, dim=1)
-            confidence, pred_idx = torch.max(probs, dim=1)
-            predicted_class = class_names[pred_idx.item()]
-
-        return render_template(
-            'index.html',
-            prediction_text=f"Predicted: {predicted_class} (Confidence: {confidence.item()*100:.2f}%)"
-        )
-
-    except Exception as e:
-        return render_template('index.html', prediction_text=f"Error: {e}")
-
+def predict(image: Image.Image):
+    img = transform(image).unsqueeze(0).to(device)
+    with torch.no_grad():
+        outputs = model(img)
+        probs = torch.softmax(outputs, dim=1)
+        confidence, pred_idx = torch.max(probs, dim=1)
+        predicted_class = class_names[pred_idx.item()]
+    return f"Predicted: {predicted_class} (Confidence: {confidence.item()*100:.2f}%)"
 
 # =========================================================
-# 🔹 Run App
+# Gradio Interface for v4+
+# =========================================================
+with gr.Blocks() as demo:
+    gr.Markdown("# 🌿 Plant Disease Detection")
+    gr.Markdown("Upload an image of your plant leaf and the model will predict its disease.")
+    
+    with gr.Row():
+        img_input = gr.Image(type="pil", label="Upload Plant Image")
+        output = gr.Textbox(label="Prediction")
+    
+    predict_btn = gr.Button("Predict")
+    predict_btn.click(fn=predict, inputs=img_input, outputs=output)
+
+# =========================================================
+# Launch App
 # =========================================================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    demo.launch()
